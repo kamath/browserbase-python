@@ -18,10 +18,7 @@ async def run_browser(browser):
     page = await browser.new_page()
     await page.goto("http://example.com")
     # other actions...
-    await asyncio.sleep(10)
-    await page.goto("http://browserbase.com")
-    await asyncio.sleep(10)
 
 
-# await run_browser()
+await run_browser()
 # %%

@@ -201,6 +201,7 @@ class SessionRecording(BaseModel):
         divId = f"BB_LIVE_SESSION_{str(uuid4())}"
         html_content = f"""
         <a href="https://www.browserbase.com/sessions/{self.session_id}">View Session on Browserbase</a>
+        <br><br><br>
 		<div id="{divId}"></div>
 		<script src="https://cdn.jsdelivr.net/npm/rrweb@latest/dist/rrweb.min.js"></script>
 		<script src="https://cdn.jsdelivr.net/npm/rrweb-player@latest/dist/index.js"></script>
