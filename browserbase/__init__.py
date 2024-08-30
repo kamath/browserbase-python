@@ -4,151 +4,12 @@ import time
 from typing import Optional, Sequence, Union, Literal, Generator
 from enum import Enum
 from pydantic import BaseModel
-from playwright.sync_api import sync_playwright, Browser, Playwright
 from contextlib import contextmanager
 from functools import wraps
 from .helpers.utils import is_running_in_jupyter
 import json
 from uuid import uuid4
-
-BrowserType = Literal["chrome", "firefox", "edge", "safari"]
-DeviceType = Literal["desktop", "mobile"]
-OperatingSystem = Literal["windows", "macos", "linux", "ios", "android"]
-SessionStatus = Literal[
-    "NEW", "CREATED", "ERROR", "RUNNING", "REQUEST_RELEASE", "RELEASING", "COMPLETED"
-]
-
-
-class Screen(BaseModel):
-    maxHeight: Optional[int] = None
-    maxWidth: Optional[int] = None
-    minHeight: Optional[int] = None
-    minWidth: Optional[int] = None
-
-
-class Fingerprint(BaseModel):
-    browserListQuery: Optional[str] = None
-    httpVersion: Optional[int] = None
-    browsers: Optional[list[BrowserType]] = None
-    devices: Optional[list[DeviceType]] = None
-    locales: Optional[list[str]] = None
-    operatingSystems: Optional[list[OperatingSystem]] = None
-    screen: Optional[Screen] = None
-
-
-class Viewport(BaseModel):
-    width: Optional[int] = None
-    height: Optional[int] = None
-
-
-class BrowserSettings(BaseModel):
-    fingerprint: Optional[Fingerprint] = None
-    viewport: Optional[Viewport] = None
-
-
-class CreateSessionOptions(BaseModel):
-    projectId: Optional[str] = None
-    extensionId: Optional[str] = None
-    browserSettings: Optional[BrowserSettings] = None
-    timeout: Optional[int] = None
-    keepAlive: Optional[bool] = None
-
-
-class Session(BaseModel):
-    id: str
-    createdAt: str
-    startedAt: str
-    endedAt: Optional[str]
-    projectId: str
-    status: Optional[SessionStatus] = None
-    taskId: Optional[str] = None
-    proxyBytes: Optional[int] = None
-    expiresAt: Optional[str] = None
-    avg_cpu_usage: Optional[float] = None
-    memory_usage: Optional[int] = None
-    details: Optional[str] = None
-    logs: Optional[str] = None
-
-
-class SessionRecordingItem(BaseModel):
-    timestamp: Optional[Union[str, int]] = None
-    # ANI QUESTION: why is this a string or int?
-    type: Optional[Union[str, int]] = None
-    data: Optional[dict] = None
-    sessionId: Optional[str] = None
-
-
-class SessionRecording(BaseModel):
-    sessionId: Optional[str] = None
-    items: list[SessionRecordingItem]
-
-    def _repr_html_(self):
-        divId = uuid4()
-        html_content = f"""
-		<div id="BB_LIVE_SESSION_{divId}"></div>
-		<script src="https://cdn.jsdelivr.net/npm/rrweb@latest/dist/rrweb.min.js"></script>
-		<script src="https://cdn.jsdelivr.net/npm/rrweb-player@latest/dist/index.js"></script>
-		<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/rrweb-player@latest/dist/style.css"/>
-
-		<script>
-		(function() {{
-			var events = {json.dumps([item.model_dump() for item in self.items])};
-			
-			function initPlayer() {{
-				if (typeof rrwebPlayer === 'undefined') {{
-					console.log('rrweb player not loaded yet, retrying...');
-					setTimeout(initPlayer, 100);
-					return;
-				}}
-				
-				new rrwebPlayer({{
-					target: document.getElementById('BB_LIVE_SESSION_{divId}'),
-					props: {{
-						events: events,
-						width: 800,
-						height: 600,
-						autoPlay: true
-					}}
-				}});
-			}}
-			
-			if (document.readyState === 'complete') {{
-				initPlayer();
-			}} else {{
-				window.addEventListener('load', initPlayer);
-			}}
-		}})();
-		</script>
-		"""
-        return html_content
-
-
-class DebugConnectionURLs(BaseModel):
-    debuggerFullscreenUrl: Optional[str] = None
-    debuggerUrl: Optional[str] = None
-    wsUrl: Optional[str] = None
-
-
-class Request(BaseModel):
-    timestamp: Optional[str]
-    params: Optional[dict]
-    rawBody: Optional[str] = None
-
-
-class Response(BaseModel):
-    timestamp: Optional[str]
-    result: Optional[dict]
-    rawBody: Optional[str] = None
-
-
-class SessionLog(BaseModel):
-    sessionId: Optional[str] = None
-    id: str
-    timestamp: Optional[str]
-    method: Optional[str]
-    request: Optional[Request]
-    response: Optional[Response]
-    pageId: Optional[str] = None
+from .models import *
 
 
 class Browserbase:
@@ -176,92 +37,40 @@ class Browserbase:
             base_url += "&enableProxy=true"
         return base_url
 
+    def get_session(self, session_id: str) -> Session:
+        return session_service.get_session(self.api_key, session_id)
+
     def list_sessions(self) -> list[Session]:
-        response = httpx.get(
-            f"{self.api_url}/v1/sessions",
-            headers={
-                "x-bb-api-key": self.api_key,
-                "Content-Type": "application/json",
-            },
+        return session_service.list_sessions(self.api_key)
+
+    def create_session(
+        self,
+        options: Optional[BrowserSettings] = None,
+        extension_id: Optional[str] = None,
+        timeout: Optional[int] = None,
+        keep_alive: bool = False,
+        proxies: Union[bool, List[Proxy], List[GeolocationProxy]] = False,
+    ) -> Session:
+        return session_service.create_session(
+            self.project_id,
+            self.api_key,
+            options,
+            extension_id,
+            timeout,
+            keep_alive,
+            proxies,
         )
 
-        response.raise_for_status()
-        data = response.json()
-        return [Session(**item) for item in data]
-
-    def create_session(self, options: Optional[CreateSessionOptions] = None) -> Session:
-        payload = {"projectId": self.project_id}
-        if options:
-            payload.update(options.model_dump(by_alias=True, exclude_none=True))
-
-        if not payload["projectId"]:
-            raise ValueError(
-                "a projectId is missing: use the options.projectId or BROWSERBASE_PROJECT_ID environment variable to set one."
-            )
-
-        response = httpx.post(
-            f"{self.api_url}/v1/sessions",
-            headers={
-                "x-bb-api-key": self.api_key,
-                "Content-Type": "application/json",
-            },
-            json=payload,
+    def update_session(self, session_id: str) -> Session:
+        return session_service.update_session(
+            self.project_id, self.api_key, session_id, "REQUEST_RELEASE"
         )
-
-        response.raise_for_status()
-        return Session(**response.json())
 
     def complete_session(self, session_id: str) -> Session:
-        if not session_id or session_id == "":
-            raise ValueError("sessionId is required")
+        return self.update_session(session_id)
 
-        if not self.project_id:
-            raise ValueError(
-                "a projectId is missing: use the options.projectId or BROWSERBASE_PROJECT_ID environment variable to set one."
-            )
-
-        response = httpx.post(
-            f"{self.api_url}/v1/sessions/{session_id}",
-            headers={
-                "x-bb-api-key": self.api_key,
-                "Content-Type": "application/json",
-            },
-            json={
-                "projectId": self.project_id,
-                "status": "REQUEST_RELEASE",
-            },
-        )
-
-        response.raise_for_status()
-        return Session(**response.json())
-
-    def get_session(self, session_id: str) -> Session:
-        response = httpx.get(
-            f"{self.api_url}/v1/sessions/{session_id}",
-            headers={
-                "x-bb-api-key": self.api_key,
-                "Content-Type": "application/json",
-            },
-        )
-
-        response.raise_for_status()
-        return Session(**response.json())
-
-    def get_session_recording(self, session_id: str) -> SessionRecording:
-        response = httpx.get(
-            f"{self.api_url}/v1/sessions/{session_id}/recording",
-            headers={
-                "x-bb-api-key": self.api_key,
-                "Content-Type": "application/json",
-            },
-        )
-
-        response.raise_for_status()
-        data = response.json()
-        return SessionRecording(
-            sessionId=session_id,
-            items=[SessionRecordingItem(**item) for item in data],
-        )
+    def debug_session(self, session_id: str) -> DebugSession:
+        return session_service.debug_session(self.api_key, session_id)
 
     def get_session_downloads(
         self, session_id: str, retry_interval: int = 2000, retry_count: int = 2
@@ -287,170 +96,11 @@ class Browserbase:
 
         return fetch_download()
 
-    def get_debug_connection_urls(self, session_id: str) -> DebugConnectionURLs:
-        response = httpx.get(
-            f"{self.api_url}/v1/sessions/{session_id}/debug",
-            headers={
-                "x-bb-api-key": self.api_key,
-                "Content-Type": "application/json",
-            },
-        )
-
-        response.raise_for_status()
-        return DebugConnectionURLs(**response.json())
-
-    def get_session_logs(self, session_id: str) -> list[SessionLog]:
-        response = httpx.get(
-            f"{self.api_url}/v1/sessions/{session_id}/logs",
-            headers={
-                "x-bb-api-key": self.api_key,
-                "Content-Type": "application/json",
-            },
-        )
-
-        response.raise_for_status()
-        data = response.json()
-        return [SessionLog(**item) for item in data]
-
-    def load(self, url: Union[str, Sequence[str]], **args):
-        if isinstance(url, str):
-            return self.load_url(url, **args)
-        elif isinstance(url, Sequence):
-            return self.load_urls(url, **args)
-        else:
-            raise TypeError("Input must be a URL string or a Sequence of URLs")
-
-    def load_url(
-        self,
-        url: str,
-        text_content: bool = False,
-        session_id: Optional[str] = None,
-        proxy: Optional[bool] = None,
-    ):
-        """Load a page in a headless browser and return the contents"""
-        if not url:
-            raise ValueError("Page URL was not provided")
-
-        with sync_playwright() as p:
-            browser = p.chromium.connect_over_cdp(
-                self.get_connect_url(session_id, proxy)
-            )
-            default_context = browser.contexts[0]
-            page = default_context.pages[0]
-            page.goto(url)
-            html = page.content()
-            if text_content:
-                readable = page.evaluate(
-                    """async () => {
-				  const readability = await import('https://cdn.skypack.dev/@mozilla/readability');
-				  return (new readability.Readability(document)).parse();
-				}"""
-                )
-
-                html = f"{readable['title']}\n{readable['textContent']}"
-            browser.close()
-
-            return html
-
-    def load_urls(
-        self,
-        urls: Sequence[str],
-        text_content: bool = False,
-        session_id: Optional[str] = None,
-        proxy: Optional[bool] = None,
-    ):
-        """Load multiple pages in a headless browser and return the contents"""
-        if not urls:
-            raise ValueError("Page URL was not provided")
-
-        with sync_playwright() as p:
-            browser = p.chromium.connect_over_cdp(
-                self.get_connect_url(session_id, proxy)
-            )
-
-            default_context = browser.contexts[0]
-            page = default_context.pages[0]
-
-            for url in urls:
-                page.goto(url)
-                html = page.content()
-                if text_content:
-                    readable = page.evaluate(
-                        """async () => {
-					  const readability = await import('https://cdn.skypack.dev/@mozilla/readability');
-					  return (new readability.Readability(document)).parse();
-					}"""
-                    )
-
-                    html = f"{readable['title']}\n{readable['textContent']}"
-                yield html
-
-            browser.close()
-
-    def screenshot(
-        self,
-        url: str,
-        full_page: bool = False,
-        session_id: Optional[str] = None,
-        proxy: Optional[bool] = None,
-    ):
-        """Load a page in a headless browser and return a screenshot as bytes"""
-        if not url:
-            raise ValueError("Page URL was not provided")
-
-        with sync_playwright() as p:
-            browser = p.chromium.connect_over_cdp(
-                self.get_connect_url(session_id, proxy)
-            )
-
-            page = browser.new_page()
-            page.goto(url)
-            screenshot = page.screenshot(full_page=full_page)
-            browser.close()
-
-            return screenshot
-
-    @contextmanager
-    def init_selenium(
-        self, session_id: Optional[str] = None, proxy: Optional[bool] = None
-    ):
-        # Add imports here to avoid unnecesary dependencies
-        from selenium import webdriver
-        from selenium.webdriver.remote.remote_connection import RemoteConnection
-        from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
-
-        class CustomRemoteConnection(RemoteConnection):
-            _session_id = None
-
-            def __init__(self, remote_server_addr: str, session_id: str):
-                super().__init__(remote_server_addr)
-                self._session_id = session_id
-
-            def get_remote_connection_headers(self, parsed_url, keep_alive=False):
-                headers = super().get_remote_connection_headers(parsed_url, keep_alive)
-                headers.update({"x-bb-api-key": os.environ["BROWSERBASE_API_KEY"]})
-                headers.update({"session-id": self._session_id})
-                return headers
-
-        if not session_id:
-            session = self.create_session()
-            session_id = session.id
-        enable_proxy = "?enableProxy=true" if proxy else ""
-        custom_conn = CustomRemoteConnection(
-            "http://connect.browserbase.com/webdriver" + enable_proxy, session_id
-        )
-        options = webdriver.ChromeOptions()
-        try:
-            driver = webdriver.Remote(custom_conn, options=options)
-            yield driver
-        finally:
-            # Make sure to quit the driver so your session is ended!
-            if driver:
-                driver.quit()
-            self.complete_session(session_id)
+    def get_session_recording(self, session_id: str) -> SessionRecording:
+        return session_service.get_session_recording(self.api_key, session_id)
 
     def selenium(
-        self, func, session_id: Optional[str] = None, proxy: Optional[bool] = None
+        self, func, session_id: Optional[str] = None, keep_alive: bool = False
     ):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -476,10 +126,11 @@ class Browserbase:
                     headers.update({"session-id": self._session_id})
                     return headers
 
-            nonlocal session_id, proxy
+            nonlocal session_id
             if not session_id:
                 session = self.create_session()
                 session_id = session.id
+            self.sessions[func.__name__] = session_id
 
             enable_proxy = "?enableProxy=true" if proxy else ""
             custom_conn = CustomRemoteConnection(
@@ -488,61 +139,65 @@ class Browserbase:
             options = webdriver.ChromeOptions()
             driver = webdriver.Remote(custom_conn, options=options)
             result = func(driver, *args, **kwargs)
-            driver.quit()
-            self.complete_session(session_id)
-            self.sessions[func.__name__] = session_id
-            while True:
-                session = self.get_session(session_id)
-                if session.status == "COMPLETED":
-                    break
-                time.sleep(1)
+            if not keep_alive:
+                driver.quit()
+                self.complete_session(session_id)
             if result is None and is_running_in_jupyter():
                 return self.get_session_recording(session_id)
             return result
 
         return wrapper
 
-    @contextmanager
-    def init_playwright(
-        self,
-        session_id: Optional[str] = None,
-        proxy: Optional[bool] = None,
-    ) -> Generator[Browser, None, None]:
-        with sync_playwright() as p:
-            browser = p.chromium.connect_over_cdp(
-                self.get_connect_url(session_id, proxy)
-            )
-            yield browser
-
-    def record_rrweb(func):
+    def sync_playwright(
+        self, func, session_id: Optional[str] = None, keep_alive: bool = False
+    ):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            browser = args[0]  # Assuming the first argument is the browser object
-            page = browser.new_page()
+            from playwright.sync_api import sync_playwright, Browser, Playwright
 
-            # Inject rrweb script
-            page.add_script_tag(
-                url="https://cdn.jsdelivr.net/npm/rrweb@latest/dist/rrweb.min.js"
-            )
+            nonlocal session_id, keep_alive
+            if not session_id:
+                session = self.create_session()
+                session_id = session.id
+            self.sessions[func.__name__] = session_id
 
-            # Start recording
-            page.evaluate(
-                """
-				window.events = [];
-				rrweb.record({
-					emit: event => window.events.push(event)
-				});
-			"""
-            )
+            with sync_playwright() as p:
+                browser = p.chromium.connect_over_cdp(
+                    self.get_connect_url(session_id, proxy)
+                )
+                result = func(browser, *args, **kwargs)
+                if not keep_alive:
+                    browser.close()
+                    self.complete_session(session_id)
+                if result is None and is_running_in_jupyter():
+                    return self.get_session_recording(session_id)
+                return result
 
-            # Run the original function
-            result = func(*args, **kwargs)
+        return wrapper
 
-            # Stop recording and save events
-            events = page.evaluate("window.events")
-            with open("rrweb.json", "w") as f:
-                json.dump(events, f)
+    def async_playwright(
+        self, func, session_id: Optional[str] = None, keep_alive: bool = False
+    ):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            from playwright.async_api import async_playwright, Browser, Playwright
 
-            return result
+            nonlocal session_id, keep_alive
+            if not session_id:
+                session = self.create_session()
+                session_id = session.id
+            self.sessions[func.__name__] = session_id
+
+            async with async_playwright() as p:
+                browser = await p.chromium.connect_over_cdp(
+                    self.get_connect_url(session_id)
+                )
+                result = await func(browser, *args, **kwargs)
+                if not keep_alive:
+                    await browser.close()
+                    self.complete_session(session_id)
+                if result is None and is_running_in_jupyter():
+                    return self.get_session_recording(session_id)
+                return result
 
         return wrapper
