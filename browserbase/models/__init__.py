@@ -190,16 +190,17 @@ class SessionRecordingItem(BaseModel):
     # ANI QUESTION: why is this a string or int?
     type: Optional[Union[str, int]] = None
     data: Optional[dict] = None
-    sessionId: Optional[str] = None
+    session_id: Optional[str] = Field(alias="sessionId")
 
 
 class SessionRecording(BaseModel):
-    sessionId: Optional[str] = None
+    session_id: str
     items: list[SessionRecordingItem]
 
     def _repr_html_(self):
         divId = f"BB_LIVE_SESSION_{str(uuid4())}"
         html_content = f"""
+        <a href="https://www.browserbase.com/sessions/{self.session_id}">View Session on Browserbase</a>
 		<div id="{divId}"></div>
 		<script src="https://cdn.jsdelivr.net/npm/rrweb@latest/dist/rrweb.min.js"></script>
 		<script src="https://cdn.jsdelivr.net/npm/rrweb-player@latest/dist/index.js"></script>

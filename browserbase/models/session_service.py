@@ -86,6 +86,6 @@ def get_session_recording(api_key: str, session_id: str) -> SessionRecording:
     response.raise_for_status()
     data = response.json()
     return SessionRecording(
-        sessionId=session_id,
+        session_id=session_id,
         items=[SessionRecordingItem(**item) for item in data],
     )
