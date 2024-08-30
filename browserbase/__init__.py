@@ -131,16 +131,21 @@ class Browserbase:
                 session = self.create_session()
                 session_id = session.id
             self.sessions[func.__name__] = session_id
+            print(
+                "View Session on Browserbase: https://www.browserbase.com/sessions/"
+                + session_id
+            )
 
-            enable_proxy = "?enableProxy=true" if proxy else ""
             custom_conn = CustomRemoteConnection(
-                "http://connect.browserbase.com/webdriver" + enable_proxy, session_id
+                "http://connect.browserbase.com/webdriver", session_id
             )
             options = webdriver.ChromeOptions()
             driver = webdriver.Remote(custom_conn, options=options)
-            result = func(driver, *args, **kwargs)
-            if not keep_alive:
-                driver.quit()
+            try:
+                result = func(driver, *args, **kwargs)
+            finally:
+                if not keep_alive:
+                    driver.quit()
                 self.complete_session(session_id)
             if result is None and is_running_in_jupyter():
                 return self.get_session_recording(session_id)
@@ -160,15 +165,19 @@ class Browserbase:
                 session = self.create_session()
                 session_id = session.id
             self.sessions[func.__name__] = session_id
+            print(
+                "View Session on Browserbase: https://www.browserbase.com/sessions/"
+                + session_id
+            )
 
             with sync_playwright() as p:
-                browser = p.chromium.connect_over_cdp(
-                    self.get_connect_url(session_id, proxy)
-                )
-                result = func(browser, *args, **kwargs)
-                if not keep_alive:
-                    browser.close()
-                    self.complete_session(session_id)
+                browser = p.chromium.connect_over_cdp(self.get_connect_url(session_id))
+                try:
+                    result = func(browser, *args, **kwargs)
+                finally:
+                    if not keep_alive:
+                        browser.close()
+                        self.complete_session(session_id)
                 if result is None and is_running_in_jupyter():
                     return self.get_session_recording(session_id)
                 return result
@@ -187,15 +196,21 @@ class Browserbase:
                 session = self.create_session()
                 session_id = session.id
             self.sessions[func.__name__] = session_id
+            print(
+                "View Session on Browserbase: https://www.browserbase.com/sessions/"
+                + session_id
+            )
 
             async with async_playwright() as p:
                 browser = await p.chromium.connect_over_cdp(
                     self.get_connect_url(session_id)
                 )
-                result = await func(browser, *args, **kwargs)
-                if not keep_alive:
-                    await browser.close()
-                    self.complete_session(session_id)
+                try:
+                    result = await func(browser, *args, **kwargs)
+                finally:
+                    if not keep_alive:
+                        await browser.close()
+                        self.complete_session(session_id)
                 if result is None and is_running_in_jupyter():
                     return self.get_session_recording(session_id)
                 return result
