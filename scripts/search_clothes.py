@@ -91,9 +91,16 @@ def search_poshmark(driver, query: str):
             print(f"Error processing item: {str(e)}")
             continue
 
-    return results
+    return [a for a in results if not all(x is None for x in a.values())]
 
 
 poshmark_results = search_poshmark("handbags")
 poshmark_results
 # %%
+!pip install pandas
+import pandas as pd
+
+poshmark_results_df = pd.DataFrame(poshmark_results)
+poshmark_results_df
+# %%
+
